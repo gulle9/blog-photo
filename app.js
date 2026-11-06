@@ -1,18 +1,41 @@
-// 블로그 사진 웹앱(핸드폰). 화면 3개: 사진 올리기 · 진행 상황 · 글 미리보기 (+ 처음 1번 로그인)
+// 블로그 사진 웹앱(핸드폰). 화면: 사진 올리기 · 진행 상황 · 고르기(필요할 때만) · 글 미리보기 (+ 처음 1번 로그인)
 // - 공개용 값만 쓴다(config.js: Supabase 주소·공개 키·알림 공개 키). 비밀 키는 PC에만 있다.
-// - 사진은 긴 변 2560px로 줄여 올리고, 줄이기 전에 촬영 시각만 읽어 함께 보낸다.
-// - 읽기·올리기는 로그인한 본인 것만 된다(DB·저장소 RLS). 상태 바꾸기는 PC만 한다.
+// - 사진은 긴 변 2560px로 줄여 올리고, 줄이기 전에 촬영 시각만 읽어 함께 보낸다. 동영상은 1개, 45MB 이하 그대로.
+// - '차종 패턴 색상' 한 줄(선택)은 parse.js로 나눠 answer에 담는다. 사장님 값은 AI 값보다 우선한다.
+// - 읽기·올리기는 로그인한 본인 것만 된다(DB·저장소 RLS). 웹앱이 바꿀 수 있는 것은 '고르기 필요'일 때 answer뿐.
 "use strict";
 
 const C = window.NBM_CONFIG || {};
 const sb = window.supabase.createClient(C.supabaseUrl, C.supabaseKey, { auth: { persistSession: true, autoRefreshToken: true } });
 const $ = (id) => document.getElementById(id);
-const MAX = 20, LONG_EDGE = 2560;
+const MAX = 20, LONG_EDGE = 2560, VIDEO_MAX = 45 * 1024 * 1024;
 const STATUS = {
-  uploaded: ["처리 중", "s-wait"], processing: ["처리 중", "s-wait"], written: ["글 완성", "s-done"],
-  draft_saved: ["임시저장 완료", "s-saved"], failed: ["실패", "s-fail"],
+  uploaded: ["처리 중", "s-wait"], processing: ["처리 중", "s-wait"], needs_choice: ["고르기 필요", "s-ask"],
+  written: ["글 완성", "s-done"], draft_saved: ["임시저장 완료", "s-saved"], failed: ["실패", "s-fail"],
 };
-let me = null, member = null, picked = [], timer = null;
+let me = null, member = null, picked = [], timer = null, video = null, SAMPLES = null, hint = null, hintPick = null;
+const samplesReady = fetch("samples/samples.json").then((r) => r.json())
+  .then((j) => { SAMPLES = j.patterns; readHint(); }).catch(() => {});
+
+function sampleOf(code) {
+  for (const [p, v] of Object.entries(SAMPLES || {})) for (const c of v.colors) if (c.code === code) return { ...c, pattern: p, label: v.label };
+  return null;
+}
+
+function tileButton(code, onPick) {
+  const s = sampleOf(code);
+  const b = document.createElement("button");
+  b.type = "button";
+  b.dataset.code = code;
+  const im = document.createElement("img");
+  im.src = "samples/" + s.tile;
+  im.alt = s.name;
+  const t = document.createElement("span");
+  t.textContent = `${s.pattern} ${s.name}`;
+  b.append(im, t);
+  b.addEventListener("click", () => onPick(code, b));
+  return b;
+}
 
 // ---------------- 시작·화면 전환 ----------------
 async function boot() {
@@ -49,8 +72,8 @@ function route() {
 }
 
 function show(v) {
-  for (const s of ["login", "upload", "jobs", "preview"]) $("v-" + s).hidden = s !== v;
-  document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.v === v || (v === "preview" && a.dataset.v === "jobs")));
+  for (const s of ["login", "upload", "jobs", "choose", "preview"]) $("v-" + s).hidden = s !== v;
+  document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.v === v || ((v === "preview" || v === "choose") && a.dataset.v === "jobs")));
   if (v !== "jobs" && timer) { clearInterval(timer); timer = null; }
   if (v === "upload") $("ios-tip").hidden = !(isIOS() && !standalone());
 }
@@ -71,17 +94,92 @@ $("files").addEventListener("change", () => {
   $("up-msg").textContent = fs.length > MAX ? `최대 ${MAX}장입니다. 앞의 ${MAX}장만 올립니다.` : "";
   $("thumbs").replaceChildren(...picked.map((f) => { const im = document.createElement("img"); im.src = URL.createObjectURL(f); return im; }));
   $("pick-text").textContent = picked.length ? `📷 ${picked.length}장 선택됨 (다시 고르기)` : "📷 사진 고르기 (시공 1건, 최대 20장)";
-  $("send").disabled = !picked.length;
+  updateSend();
+});
+
+// 한 줄 입력: 바로 나눠 보여 주고, 못 알아들으면 비슷한 견본 3~4개를 띄워 한 번 눌러 고르게 한다
+$("hint").addEventListener("input", () => { clearTimeout(readHint.t); readHint.t = setTimeout(readHint, 250); });
+$("hint").addEventListener("change", readHint);
+
+function readHint() {
+  const text = $("hint").value;
+  hint = SAMPLES && window.NBM_parseLine ? window.NBM_parseLine(text, SAMPLES) : null;
+  hintPick = null;
+  const box = $("hint-pick"), msg = $("hint-msg");
+  box.replaceChildren();
+  box.hidden = true;
+  msg.className = "muted";
+  if (!text.trim()) msg.textContent = "비워 두면 AI가 사진과 견본으로 맞힙니다(선택 사항).";
+  else if (!hint) msg.textContent = "견본 목록을 불러오는 중…";
+  else if (hint.status === "ok") { msg.textContent = "✓ " + hint.message; msg.className = "ok"; }
+  else {
+    msg.textContent = hint.message;
+    msg.className = "err";
+    if (hint.suggestions.length) {
+      box.hidden = false;
+      box.append(...hint.suggestions.map((code) => tileButton(code, (c, b) => {
+        hintPick = c;
+        box.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+        const s = sampleOf(c);
+        msg.textContent = `✓ ${hint.car ? "차종 " + hint.car + " · " : ""}${s.label} · ${s.name}`;
+        msg.className = "ok";
+        updateSend();
+      })));
+    }
+  }
+  updateSend();
+}
+
+function hintReady() {
+  return !$("hint").value.trim() || (hint && (hint.status === "ok" || hintPick));
+}
+
+function updateSend() {
+  $("send").disabled = !picked.length || !hintReady();
+}
+
+function answerFromHint() {
+  const text = $("hint").value.trim();
+  if (!text || !hint) return null;
+  const a = { text: text.slice(0, 50) };                       // DB 한도 500바이트(한글 3바이트) 안에 들게
+  if (hint.car) a.car = hint.car;
+  const code = hintPick || hint.code;
+  if (code) { const s = sampleOf(code); Object.assign(a, { sample: code, pattern: s.pattern, color: s.name }); }
+  else { if (hint.pattern) a.pattern = hint.pattern; if (hint.color) a.color = hint.color; }
+  return a;
+}
+
+$("video").addEventListener("change", () => {
+  const f = $("video").files[0] || null;
+  video = null;
+  $("video-msg").className = "muted";
+  $("video-msg").textContent = "";
+  $("video-text").textContent = "🎬 동영상 1개 (선택 사항, 45MB 이하)";
+  if (!f) return;
+  const ext = /\.mov$/i.test(f.name) || f.type === "video/quicktime" ? "mov" : /\.mp4$/i.test(f.name) || f.type === "video/mp4" ? "mp4" : null;
+  const mb = (f.size / 1024 / 1024).toFixed(1);
+  if (!ext) {
+    $("video-msg").className = "err";
+    $("video-msg").textContent = "mp4·mov 동영상만 올릴 수 있습니다.";
+  } else if (f.size > VIDEO_MAX) {
+    $("video-msg").className = "err";
+    $("video-msg").textContent = `동영상이 ${mb}MB라서 너무 큽니다(45MB 이하). 핸드폰 사진 앱에서 앞뒤를 잘라 짧게(약 30초) 만든 뒤 다시 골라 주세요.`;
+  } else {
+    video = { file: f, ext };
+    $("video-text").textContent = `🎬 동영상 선택됨 (${mb}MB, 다시 고르기)`;
+  }
+  if (!video) $("video").value = "";
 });
 
 $("send").addEventListener("click", async () => {
-  if (!picked.length) return;
+  if (!picked.length || !hintReady()) return;
   $("send").disabled = true;
   $("files").disabled = true;
   $("bar").hidden = false;
   $("bar").value = 0;
   const jobId = crypto.randomUUID();
   const paths = [], taken = [];
+  const steps = picked.length + (video ? 1 : 0);
   try {
     for (let i = 0; i < picked.length; i++) {
       $("up-msg").textContent = `${i + 1} / ${picked.length}장 올리는 중…`;
@@ -91,12 +189,29 @@ $("send").addEventListener("click", async () => {
       if (error) throw error;
       paths.push(path);
       taken.push(takenAt);
-      $("bar").value = ((i + 1) / picked.length) * 100;
+      $("bar").value = ((i + 1) / steps) * 100;
     }
-    const { error } = await sb.from("mobile_jobs").insert({ id: jobId, org_id: member.org_id, user_id: me.id, photo_paths: paths, taken_at: taken });
+    let videoPath = null;
+    if (video) {
+      $("up-msg").textContent = "동영상 올리는 중… (와이파이에서 더 빠릅니다)";
+      videoPath = `${me.id}/${jobId}/video.${video.ext}`;
+      const { error } = await sb.storage.from("videos").upload(videoPath, video.file,
+        { contentType: video.ext === "mov" ? "video/quicktime" : "video/mp4", upsert: false });
+      if (error) throw error;
+      $("bar").value = 100;
+    }
+    const row = { id: jobId, org_id: member.org_id, user_id: me.id, photo_paths: paths, taken_at: taken, video_path: videoPath };
+    const answer = answerFromHint();
+    if (answer) row.answer = answer;
+    const { error } = await sb.from("mobile_jobs").insert(row);
     if (error) throw error;
     picked = [];
+    video = null;
     $("files").value = "";
+    $("video").value = "";
+    $("hint").value = "";
+    readHint();
+    $("video-text").textContent = "🎬 동영상 1개 (선택 사항, 45MB 이하)";
     $("thumbs").replaceChildren();
     $("pick-text").textContent = "📷 사진 고르기 (시공 1건, 최대 20장)";
     $("up-msg").textContent = "";
@@ -168,7 +283,7 @@ async function showJobs() {
 }
 
 async function loadJobs() {
-  const { data, error } = await sb.from("mobile_jobs").select("id,status,title,note,created_at,photo_paths")
+  const { data, error } = await sb.from("mobile_jobs").select("id,status,title,note,created_at,photo_paths,video_path")
     .order("created_at", { ascending: false }).limit(30);
   if (error) return;
   $("jobs-empty").hidden = data.length > 0;
@@ -179,16 +294,17 @@ async function loadJobs() {
     row.className = "row";
     const when = document.createElement("span");
     when.className = "muted";
-    when.textContent = `${new Date(j.created_at).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} · 사진 ${j.photo_paths.length}장`;
+    when.textContent = `${new Date(j.created_at).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} · 사진 ${j.photo_paths.length}장${j.video_path ? " · 동영상" : ""}`;
     const badge = document.createElement("span");
     badge.className = "badge " + cls;
     badge.textContent = label;
     row.append(when, badge);
     const title = document.createElement("div");
     title.className = "title";
-    title.textContent = j.title || (j.status === "failed" ? j.note || "" : "AI가 사진을 보고 글을 쓰는 중입니다");
+    title.textContent = j.title || (j.status === "failed" || j.status === "needs_choice" ? `${j.status === "needs_choice" ? "👉 " : ""}${j.note || ""}`
+      : "AI가 사진을 보고 글을 쓰는 중입니다");
     li.append(row, title);
-    if (j.title) li.addEventListener("click", () => { location.hash = "#job=" + j.id; });
+    if (j.title || j.status === "needs_choice") li.addEventListener("click", () => { location.hash = "#job=" + j.id; });
     return li;
   }));
 }
@@ -200,8 +316,9 @@ async function openJob(id) {
   art.replaceChildren();
   $("pv-info").textContent = "불러오는 중…";
   $("copy").hidden = true;
-  const { data: j } = await sb.from("mobile_jobs").select("status,title,preview,note").eq("id", id).maybeSingle();
+  const { data: j } = await sb.from("mobile_jobs").select("id,status,title,preview,note,choices,answer").eq("id", id).maybeSingle();
   if (!j) { $("pv-info").textContent = "글을 찾을 수 없습니다."; return; }
+  if (j.status === "needs_choice") return showChoose(j);
   const pv = j.preview || {};
   if (!pv.title) { $("pv-info").textContent = `${(STATUS[j.status] || [j.status])[0]} ${j.note || ""}`; return; }
   const urls = {};
@@ -224,6 +341,7 @@ async function openJob(id) {
     }
     paras(s.body);
   }
+  if (pv.video) add("div", "🎬 [동영상] 자리 — 올린 시공 동영상을 여기에 넣으세요. 동영상은 자동 가림이 안 되므로 번호판·얼굴이 보이면 넣지 마세요.", "video-slot");
   paras(pv.outro);
   add("p", (pv.tags || []).map((t) => "#" + String(t).replace(/^#/, "")).join(" "), "tags");
   $("pv-info").textContent = `${(STATUS[j.status] || [j.status])[0]} · 담당 블로그 ${pv.site_name || "-"} · 검색어 ${pv.keyword || "-"}`
@@ -234,6 +352,66 @@ async function openJob(id) {
   $("copy").onclick = async () => {
     try { await navigator.clipboard.writeText(pv.plain_text || ""); $("copy").textContent = "복사됨 ✓"; }
     catch (_) { $("copy").textContent = "복사 실패 — 길게 눌러 직접 복사하세요"; }
+  };
+}
+
+// ---------------- 고르기(AI가 확실하지 않을 때만) ----------------
+async function showChoose(j) {
+  show("choose");
+  await samplesReady;                                          // 알림을 눌러 바로 열어도 견본 이름표가 있게
+  const ch = j.choices || {};
+  const pickedNow = {};
+  const done = j.answer && j.answer.picked;
+  $("ch-msg").textContent = done ? "고른 것으로 PC가 글을 쓰는 중입니다." : "";
+  $("ch-send").hidden = !!done;
+  $("ch-photo").hidden = true;
+  if (ch.photo) {
+    const { data } = await sb.storage.from("previews").createSignedUrl(ch.photo, 3600);
+    if (data?.signedUrl) { $("ch-photo").src = data.signedUrl; $("ch-photo").hidden = false; }
+  }
+  const ready = () => { $("ch-send").disabled = (ch.sample && !pickedNow.sample) || (ch.car && !pickedNow.car); };
+  const mark = (box, b) => box.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+
+  $("ch-sample").hidden = !ch.sample;
+  $("ch-tiles").replaceChildren();
+  if (ch.sample) {
+    $("ch-sample-q").textContent = ch.sample.question;
+    const box = $("ch-tiles");
+    for (const o of ch.sample.options) {
+      if (!sampleOf(o.code)) continue;
+      box.append(tileButton(o.code, (code, b) => { pickedNow.sample = code; mark(box, b); ready(); }));
+    }
+    const none = document.createElement("button");
+    none.type = "button";
+    none.className = "none";
+    none.textContent = "여기에 없음 (패턴·색상 빼고 쓰기)";
+    none.addEventListener("click", () => { pickedNow.sample = "none"; mark(box, none); ready(); });
+    box.append(none);
+  }
+  $("ch-car").hidden = !ch.car;
+  $("ch-cars").replaceChildren();
+  if (ch.car) {
+    $("ch-car-q").textContent = ch.car.question;
+    const box = $("ch-cars");
+    for (const name of [...ch.car.options, "none"]) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = name === "none" ? "모름 (차종 빼고 쓰기)" : name;
+      b.addEventListener("click", () => { pickedNow.car = name; mark(box, b); ready(); });
+      box.append(b);
+    }
+  }
+  ready();
+  $("ch-send").onclick = async () => {
+    $("ch-send").disabled = true;
+    const answer = { ...(j.answer || {}), ...pickedNow, picked: true };
+    if (pickedNow.sample && pickedNow.sample !== "none") {
+      const s = sampleOf(pickedNow.sample);
+      Object.assign(answer, { pattern: s.pattern, color: s.name });
+    }
+    const { error } = await sb.from("mobile_jobs").update({ answer }).eq("id", j.id);
+    if (error) { $("ch-msg").textContent = "저장 실패: " + (error.message || error) + " — 다시 눌러 주세요"; ready(); return; }
+    location.hash = "#jobs";
   };
 }
 

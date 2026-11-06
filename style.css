@@ -49,3 +49,19 @@ nav { position: fixed; bottom: 0; left: 0; right: 0; display: flex; background: 
 nav a { flex: 1; text-align: center; padding: 8px 0 10px; color: var(--muted); text-decoration: none; font-size: 1.3rem; }
 nav a span { display: block; font-size: .78rem; }
 nav a.on { color: var(--green); font-weight: 700; }
+.line { width: 100%; font-size: 1rem; padding: 14px; margin: 12px 0 4px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--card); color: var(--text); }
+.pick.small { padding: 14px 12px; margin-top: 12px; font-weight: 500; }
+.ok { color: #15803d; }
+.tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 10px 0; }
+.tiles button { background: var(--card); border: 3px solid var(--line); padding: 6px; border-radius: 12px; color: var(--text); }
+.tiles button img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; display: block; }
+.tiles button span { display: block; font-size: .9rem; margin-top: 4px; font-weight: 600; }
+.tiles button.on, .cars button.on { border-color: var(--green); background: #dcfce7; color: #15803d; }
+.tiles button.none { grid-column: span 2; padding: 12px; }
+.cars { display: grid; gap: 8px; }
+.cars button { background: var(--card); border: 3px solid var(--line); padding: 14px; font-weight: 700; color: var(--text); }
+.ch-photo { width: 100%; max-height: 260px; object-fit: cover; border-radius: 12px; }
+#v-choose h3 { font-size: 1.05rem; margin: 16px 0 4px; }
+.s-ask { background: #ffedd5; color: #c2410c; }
+.video-slot { border: 2px dashed var(--green); border-radius: 10px; padding: 12px; margin: 14px 0; font-size: .92rem; }

@@ -39,6 +39,15 @@
       <span id="pick-text">📷 사진 고르기 (시공 1건, 최대 20장)</span>
     </label>
     <div id="thumbs" class="thumbs"></div>
+    <input id="hint" type="text" class="line" autocomplete="off" enterkeyhint="done"
+           placeholder="차종 패턴 색상 (예: 카니발 P3 마일드아이보리)">
+    <p id="hint-msg" class="muted">비워 두면 AI가 사진과 견본으로 맞힙니다(선택 사항).</p>
+    <div id="hint-pick" class="tiles" hidden></div>
+    <label class="pick small">
+      <input id="video" type="file" accept="video/mp4,video/quicktime,.mp4,.mov">
+      <span id="video-text">🎬 동영상 1개 (선택 사항, 45MB 이하)</span>
+    </label>
+    <p id="video-msg" class="muted"></p>
     <button id="send" class="primary big" disabled>올리기</button>
     <progress id="bar" max="100" value="0" hidden></progress>
     <p id="up-msg" class="muted"></p>
@@ -49,6 +58,22 @@
   <section id="v-jobs" hidden>
     <ul id="jobs" class="jobs"></ul>
     <p id="jobs-empty" class="muted" hidden>아직 올린 사진이 없습니다.</p>
+  </section>
+
+  <!-- 고르기 필요: AI가 확실하지 않을 때 한 번 누르기 -->
+  <section id="v-choose" hidden>
+    <a href="#jobs" class="back">← 진행 상황</a>
+    <img id="ch-photo" class="ch-photo" alt="" hidden>
+    <div id="ch-sample" hidden>
+      <h3 id="ch-sample-q"></h3>
+      <div id="ch-tiles" class="tiles"></div>
+    </div>
+    <div id="ch-car" hidden>
+      <h3 id="ch-car-q"></h3>
+      <div id="ch-cars" class="cars"></div>
+    </div>
+    <button id="ch-send" class="primary big" disabled>이걸로 글 쓰기</button>
+    <p id="ch-msg" class="muted"></p>
   </section>
 
   <!-- ③ 글 미리보기 -->
@@ -67,6 +92,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.js"></script>
 <script src="config.js"></script>
+<script src="parse.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
