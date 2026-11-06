@@ -315,7 +315,8 @@ async function openJob(id) {
   const art = $("pv");
   art.replaceChildren();
   $("pv-info").textContent = "불러오는 중…";
-  $("copy").hidden = true;
+  $("copybar").hidden = true;
+  $("pv-draft").hidden = true;
   const { data: j } = await sb.from("mobile_jobs").select("id,status,title,preview,note,choices,answer").eq("id", id).maybeSingle();
   if (!j) { $("pv-info").textContent = "글을 찾을 수 없습니다."; return; }
   if (j.status === "needs_choice") return showChoose(j);
@@ -328,6 +329,7 @@ async function openJob(id) {
   }
   const add = (tag, text, cls) => { const el = document.createElement(tag); el.textContent = text; if (cls) el.className = cls; art.append(el); return el; };
   const paras = (text) => String(text || "").split("\n").filter((s) => s.trim()).forEach((s) => add("p", s));
+  if (pv.title_candidates?.length) add("p", "제목 후보: " + pv.title_candidates.map((t, i) => `${i + 1}. ${t}`).join("  /  "), "tags");
   add("h2", pv.title);
   paras(pv.intro);
   for (const s of pv.sections || []) {
@@ -345,14 +347,73 @@ async function openJob(id) {
   paras(pv.outro);
   add("p", (pv.tags || []).map((t) => "#" + String(t).replace(/^#/, "")).join(" "), "tags");
   $("pv-info").textContent = `${(STATUS[j.status] || [j.status])[0]} · 담당 블로그 ${pv.site_name || "-"} · 검색어 ${pv.keyword || "-"}`
+    + (pv.cost_krw != null ? ` · 이 글 AI 비용 약 ${Math.round(pv.cost_krw).toLocaleString()}원` : "")
     + (pv.left_out?.length ? ` · 확실하지 않아 뺀 것: ${pv.left_out.join(", ")}` : "")
     + (pv.photos_removed ? " · 사진 미리보기 기간(30일)이 지났습니다" : "");
-  $("copy").hidden = false;
-  $("copy").textContent = "📋 글 복사";
-  $("copy").onclick = async () => {
-    try { await navigator.clipboard.writeText(pv.plain_text || ""); $("copy").textContent = "복사됨 ✓"; }
-    catch (_) { $("copy").textContent = "복사 실패 — 길게 눌러 직접 복사하세요"; }
+  showDraft(pv.draft);
+  const tags = (pv.tags || []).map((t) => "#" + String(t).replace(/^#/, "")).join(" ");
+  const body = pv.body_text || String(pv.plain_text || "").split("\n").slice(1).filter((l) => l !== tags).join("\n").trim();
+  copyButton("cp-title", "📋 제목 복사", pv.title);
+  copyButton("cp-body", "📋 본문 복사", body);
+  copyButton("cp-tags", "📋 태그 복사", tags);
+  const order = (pv.photos || []).filter((p) => urls[p]);
+  $("cp-photos").hidden = !order.length;
+  $("cp-photos").textContent = `📷 사진 ${order.length}장 모두 저장`;
+  $("cp-photos").onclick = () => savePhotos(order.map((p) => urls[p]));
+  $("copybar").hidden = false;
+}
+
+function showDraft(d) {
+  const box = $("pv-draft");
+  if (!d || !d.status) { box.hidden = true; return; }
+  const msg = {
+    auto: ["⏳ PC가 네이버에 자동 임시저장할 차례를 기다리는 중입니다.", ""],
+    saved: ["✅ 네이버에 임시저장했습니다. 네이버 블로그 앱 > 글쓰기 > 임시저장 글에서 확인 후 발행하세요." + (d.note ? ` (${d.note})` : ""), "ok"],
+    failed: [`⚠ 자동 임시저장 실패(${d.step || "-"}) — 아래 복사 버튼으로 올려 주세요.`, "bad"],
+    copy: ["이 블로그는 복사 방식입니다: 제목·본문·태그를 복사해 네이버 앱에 붙여넣고, 사진은 저장해 순서대로 넣으세요.", ""],
+  }[d.status] || [d.status, ""];
+  box.textContent = msg[0];
+  box.className = "draft " + msg[1];
+  box.hidden = false;
+}
+
+function copyButton(id, label, text) {
+  const b = $(id);
+  b.textContent = label;
+  b.hidden = !text;
+  b.onclick = async () => {
+    try { await navigator.clipboard.writeText(text || ""); b.textContent = "복사됨 ✓"; }
+    catch (_) { b.textContent = "복사 실패"; }
+    setTimeout(() => { b.textContent = label; }, 2000);
   };
+}
+
+async function savePhotos(list) {
+  const b = $("cp-photos");
+  const label = b.textContent;
+  b.textContent = "사진 받는 중…";
+  try {
+    const files = [];
+    for (const [i, u] of list.entries()) {
+      const blob = await (await fetch(u)).blob();
+      files.push(new File([blob], `${String(i + 1).padStart(2, "0")}.jpg`, { type: "image/jpeg" }));
+    }
+    if (navigator.canShare && navigator.canShare({ files })) {
+      await navigator.share({ files, title: "블로그 사진" });         // 공유 창에서 '이미지 저장'(글 순서대로 01, 02…)
+    } else {
+      for (const f of files) {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(f);
+        a.download = f.name;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      }
+    }
+    b.textContent = "저장 창을 열었습니다 ✓";
+  } catch (e) {
+    b.textContent = e && e.name === "AbortError" ? label : "사진 저장 실패 — 사진을 길게 눌러 저장하세요";
+  }
+  setTimeout(() => { b.textContent = label; }, 3000);
 }
 
 // ---------------- 고르기(AI가 확실하지 않을 때만) ----------------

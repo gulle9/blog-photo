@@ -80,7 +80,13 @@
   <section id="v-preview" hidden>
     <a href="#jobs" class="back">← 진행 상황</a>
     <div id="pv-info" class="info"></div>
-    <button id="copy" class="primary">📋 글 복사</button>
+    <div id="pv-draft" class="draft" hidden></div>
+    <div id="copybar" class="copybar" hidden>
+      <button id="cp-title" class="primary">📋 제목 복사</button>
+      <button id="cp-body" class="primary">📋 본문 복사</button>
+      <button id="cp-tags" class="primary">📋 태그 복사</button>
+      <button id="cp-photos" class="primary">📷 사진 모두 저장</button>
+    </div>
     <article id="pv"></article>
   </section>
 </main>
