@@ -14,6 +14,7 @@ const STATUS = {
   uploaded: ["처리 중", "s-wait"], processing: ["처리 중", "s-wait"], needs_choice: ["고르기 필요", "s-ask"],
   written: ["글 완성", "s-done"], draft_saved: ["임시저장 완료", "s-saved"], failed: ["실패", "s-fail"],
 };
+let topPick = null;
 let me = null, member = null, picked = [], timer = null, video = null, SAMPLES = null, hint = null, hintPick = null;
 const samplesReady = fetch("samples/samples.json").then((r) => r.json())
   .then((j) => { SAMPLES = j.patterns; readHint(); }).catch(() => {});
@@ -70,14 +71,16 @@ function route() {
   if (h.startsWith("job=")) return openJob(h.slice(4));
   if (h === "jobs") return showJobs();
   if (h === "plan") return showPlan();
+  if (h === "stats") return showStats();
+  if (h === "guest") return showGuests();
   show("upload");
 }
 
 function show(v) {
-  for (const s of ["login", "upload", "jobs", "choose", "preview", "plan"]) $("v-" + s).hidden = s !== v;
+  for (const s of ["login", "upload", "jobs", "choose", "preview", "plan", "stats", "guest"]) $("v-" + s).hidden = s !== v;
   document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.v === v || ((v === "preview" || v === "choose") && a.dataset.v === "jobs")));
-  if (v !== "jobs" && timer) { clearInterval(timer); timer = null; }
-  if (v === "upload") $("ios-tip").hidden = !(isIOS() && !standalone());
+  if (timer) { clearInterval(timer); timer = null; }               // 화면마다 자기 새로고침만
+  if (v === "upload") { $("ios-tip").hidden = !(isIOS() && !standalone()); loadTop5(); }
 }
 
 // ---------------- 로그인 ----------------
@@ -142,6 +145,7 @@ function updateSend() {
 
 function answerFromHint() {
   const text = $("hint").value.trim();
+  if (!text && topPick) return { keyword: topPick.keyword, car: topPick.car || undefined, from: "top5" };   // 한 줄이 비면 고른 추천으로
   if (!text || !hint) return null;
   const a = { text: text.slice(0, 50) };                       // DB 한도 500바이트(한글 3바이트) 안에 들게
   if (hint.car) a.car = hint.car;
@@ -156,7 +160,7 @@ $("video").addEventListener("change", () => {
   video = null;
   $("video-msg").className = "muted";
   $("video-msg").textContent = "";
-  $("video-text").textContent = "🎬 동영상 1개 (선택 사항, 45MB 이하)";
+  $("video-text").textContent = "🎬 동영상 고르기 (1개, 선택 사항, 45MB 이하)";
   if (!f) return;
   const ext = /\.mov$/i.test(f.name) || f.type === "video/quicktime" ? "mov" : /\.mp4$/i.test(f.name) || f.type === "video/mp4" ? "mp4" : null;
   const mb = (f.size / 1024 / 1024).toFixed(1);
@@ -212,8 +216,9 @@ $("send").addEventListener("click", async () => {
     $("files").value = "";
     $("video").value = "";
     $("hint").value = "";
+    topPick = null;
     readHint();
-    $("video-text").textContent = "🎬 동영상 1개 (선택 사항, 45MB 이하)";
+    $("video-text").textContent = "🎬 동영상 고르기 (1개, 선택 사항, 45MB 이하)";
     $("thumbs").replaceChildren();
     $("pick-text").textContent = "📷 사진 고르기 (시공 1건)";
     $("up-msg").textContent = "";
@@ -624,6 +629,161 @@ async function saveSub(sub) {
 function b64u(s) {
   const b = atob((s + "=".repeat((4 - (s.length % 4)) % 4)).replace(/-/g, "+").replace(/_/g, "/"));
   return Uint8Array.from(b, (c) => c.charCodeAt(0));
+}
+
+// ---------------- 다음 글 추천 TOP 5(PC가 매일 계산) ----------------
+const el = (tag, text, cls) => { const e = document.createElement(tag); if (text != null) e.textContent = text; if (cls) e.className = cls; return e; };
+
+async function loadTop5() {
+  const box = $("top5");
+  const { data, error } = await sb.from("mobile_suggestions").select("rank,car,keyword,site_name,grade,reason,updated_at").order("rank");
+  if (error || !data || !data.length) { box.hidden = true; return; }
+  box.hidden = false;
+  const list = $("top5-list");
+  list.replaceChildren(...data.map((s) => {
+    const li = el("li", null, "top");
+    const head = el("div", null, "row");
+    head.append(el("b", `${s.rank}. ${s.keyword}`), el("span", `기회 ${s.grade || "-"} (추정치)`, "badge s-ask"));
+    li.append(head, el("div", `${s.car || ""} · 담당 ${s.site_name || "-"}`, "muted"), el("div", s.reason, "why"));
+    li.classList.toggle("on", topPick?.keyword === s.keyword);
+    li.addEventListener("click", () => {
+      topPick = topPick?.keyword === s.keyword ? null : s;
+      list.querySelectorAll("li").forEach((x) => x.classList.toggle("on", x === li && !!topPick));
+      $("top5-msg").textContent = topPick ? `✓ '${s.keyword}'로 씁니다(한 줄 입력이 비어 있을 때). 같은 차 사진을 올려 주세요.` : "";
+    });
+    return li;
+  }));
+  $("top5-when").textContent = `계산 ${new Date(data[0].updated_at).toLocaleDateString("ko-KR")} · (실제)=네이버 API 값, (추정치)=계산값`;
+}
+
+// ---------------- 통계 올리기(네이버 블로그 앱 통계 > 유입분석 캡처) ----------------
+const TSTATUS = { uploaded: ["읽는 중", "s-wait"], reading: ["읽는 중", "s-wait"], needs_blog: ["블로그 고르기", "s-ask"],
+  confirm: ["숫자 확인", "s-ask"], duplicate: ["덮어쓸까요?", "s-ask"], saved: ["저장됨", "s-done"], failed: ["실패", "s-fail"] };
+
+$("stat-files").addEventListener("change", () => {
+  const fs = [...$("stat-files").files].slice(0, 10);
+  $("stat-send").disabled = !fs.length;
+  $("stat-msg").textContent = fs.length ? `캡처 ${fs.length}장 선택됨` : "";
+});
+
+$("stat-send").addEventListener("click", async () => {
+  const fs = [...$("stat-files").files].slice(0, 10);
+  if (!fs.length) return;
+  $("stat-send").disabled = true;
+  const id = crypto.randomUUID(), paths = [];
+  try {
+    for (let i = 0; i < fs.length; i++) {
+      $("stat-msg").textContent = `${i + 1} / ${fs.length}장 올리는 중…`;
+      const { blob } = await shrink(fs[i]);
+      const path = `${me.id}/${id}/${String(i + 1).padStart(2, "0")}.jpg`;
+      const { error } = await sb.storage.from("stats").upload(path, blob, { contentType: "image/jpeg", upsert: false });
+      if (error) throw error;
+      paths.push(path);
+    }
+    const { error } = await sb.from("traffic_uploads").insert({ id, org_id: member.org_id, user_id: me.id, image_paths: paths });
+    if (error) throw error;
+    $("stat-files").value = "";
+    $("stat-msg").textContent = "올렸습니다. PC가 읽으면 아래에 표가 나옵니다.";
+    loadStats();
+  } catch (e) {
+    $("stat-msg").textContent = "올리기 실패: " + (e.message || e);
+    $("stat-send").disabled = false;
+  }
+});
+
+async function showStats() {
+  show("stats");
+  await loadStats();
+  if (!timer) timer = setInterval(() => { if (!document.hidden) loadStats(); }, 6000);
+}
+
+async function answerStat(id, answer) {
+  const { error } = await sb.from("traffic_uploads").update({ answer }).eq("id", id);
+  $("stat-msg").textContent = error ? "기록 실패 — 다시 눌러 주세요" : "전달했습니다. PC가 곧 처리합니다.";
+  loadStats();
+}
+
+function statTable(ex) {
+  const t = el("table", null, "stat");
+  const add = (title, rows) => {
+    if (!rows?.length) return;
+    const h = el("tr"); h.append(el("th", title), el("th", "수"), el("th", "%")); t.append(h);
+    for (const r of rows) { const tr = el("tr"); tr.append(el("td", r.name), el("td", r.count ?? "-"), el("td", r.share ?? "-")); t.append(tr); }
+  };
+  add("유입경로", ex.sources);
+  add("검색어", ex.keywords);
+  return t;
+}
+
+async function loadStats() {
+  const { data, error } = await sb.from("traffic_uploads").select("id,status,period_start,period_end,extracted,choices,answer,note,created_at")
+    .order("created_at", { ascending: false }).limit(10);
+  if (error) return;
+  $("stat-list").replaceChildren(...data.map((j) => {
+    const [label, cls] = TSTATUS[j.status] || [j.status, "s-wait"];
+    const li = el("li");
+    const row = el("div", null, "row");
+    row.append(el("span", `${new Date(j.created_at).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}`
+      + (j.period_start ? ` · ${j.period_start}~${j.period_end}` : ""), "muted"), el("span", label, "badge " + cls));
+    li.append(row);
+    if (j.note) li.append(el("div", j.note, "title"));
+    const ex = j.extracted || {};
+    const waiting = j.answer != null;
+    if (j.status === "confirm" || j.status === "duplicate") li.append(el("div", `블로그: ${ex.blog_name || "-"} · 기간: ${ex.period_label || "-"}`, "muted"), statTable(ex));
+    const bar = el("div", null, "btns");
+    if (!waiting && j.status === "needs_blog") for (const s of j.choices?.sites || []) {
+      const b = el("button", s.name, "primary"); b.onclick = () => answerStat(j.id, { site_id: s.id }); bar.append(b);
+    }
+    if (!waiting && j.status === "confirm") {
+      const ok = el("button", "✅ 맞음", "primary"); ok.onclick = () => answerStat(j.id, { confirm: true });
+      const no = el("button", "틀림(저장 안 함)", "ghost"); no.onclick = () => answerStat(j.id, { confirm: false });
+      bar.append(ok, no);
+    }
+    if (!waiting && j.status === "duplicate") {
+      const ow = el("button", "새 캡처로 덮어쓰기", "primary"); ow.onclick = () => answerStat(j.id, { overwrite: true });
+      const keep = el("button", "기존 것 그대로", "ghost"); keep.onclick = () => answerStat(j.id, { overwrite: false });
+      bar.append(ow, keep);
+    }
+    if (waiting) bar.append(el("span", "PC가 처리하는 중…", "muted"));
+    if (bar.childNodes.length) li.append(bar);
+    return li;
+  }));
+}
+
+// ---------------- 블로그 보고 온 손님(문의 기록) ----------------
+async function showGuests() {
+  show("guest");
+  $("g-date").value = ymd(new Date());
+  const { jobs } = await writtenJobs();
+  $("g-job").replaceChildren(el("option", "(모름)"), ...(jobs || []).slice().reverse().map((j) => { const o = el("option", j.title || "(제목 없음)"); o.value = j.id; return o; }));
+  $("g-job").options[0].value = "";
+  await loadGuests();
+}
+
+$("g-save").addEventListener("click", async () => {
+  const row = { org_id: member.org_id, user_id: me.id, inquired_on: $("g-date").value || ymd(new Date()),
+                car: $("g-car").value.trim().slice(0, 40) || null, job_id: $("g-job").value || null };
+  const { error } = await sb.from("inquiries").insert(row);
+  $("g-msg").textContent = error ? "기록 실패: " + error.message : "✅ 기록했습니다. 시공하면 아래에서 체크하세요.";
+  if (!error) { $("g-car").value = ""; loadGuests(); }
+});
+
+async function loadGuests() {
+  const { data, error } = await sb.from("inquiries").select("id,inquired_on,car,installed,job_id").order("inquired_on", { ascending: false }).limit(30);
+  if (error) { $("g-msg").textContent = "문의 기록을 불러오지 못했습니다."; return; }
+  const month = ymd(new Date()).slice(0, 7);
+  const mine = data.filter((x) => x.inquired_on.startsWith(month));
+  $("g-sum").textContent = `이번 달 문의 ${mine.length}건 · 시공 ${mine.filter((x) => x.installed).length}건`;
+  $("g-list").replaceChildren(...data.map((q) => {
+    const li = el("li", null, "row");
+    li.append(el("span", `${q.inquired_on} · ${q.car || "차종 모름"}`));
+    const lab = el("label", null, "chk");
+    const cb = el("input"); cb.type = "checkbox"; cb.checked = !!q.installed;
+    cb.onchange = async () => { await sb.from("inquiries").update({ installed: cb.checked }).eq("id", q.id); loadGuests(); };
+    lab.append(cb, document.createTextNode(" 시공함"));
+    li.append(lab);
+    return li;
+  }));
 }
 
 boot();

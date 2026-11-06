@@ -43,6 +43,17 @@ article { background: var(--card); border-radius: 12px; padding: 4px 16px 16px; 
 article h2 { font-size: 1.3rem; line-height: 1.4; }
 article h3 { font-size: 1.08rem; border-left: 4px solid var(--green); padding-left: 8px; margin-top: 26px; }
 article img { width: 100%; border-radius: 8px; margin: 8px 0 2px; }
+.top5 { margin-top: 16px; }
+.top5 h3 { margin: 0 0 4px; font-size: 1.05rem; }
+li.top { cursor: pointer; border: 2px solid transparent; }
+li.top.on { border-color: var(--green); background: #dcfce7; }
+li.top .why { font-size: .85rem; color: var(--muted); margin-top: 4px; }
+table.stat { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: .9rem; }
+table.stat th, table.stat td { border-bottom: 1px solid var(--line); padding: 4px 6px; text-align: left; }
+.btns { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.field { display: grid; gap: 4px; margin: 8px 0; font-weight: 600; }
+.field input, .field select { font: inherit; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
+.chk { display: flex; align-items: center; gap: 4px; }
 .copybar .wide { grid-column: span 2; }
 .photo-no { display: inline-block; margin: 10px 0 4px; padding: 2px 10px; border-radius: 8px; background: #fde68a; color: #92400e; font-weight: 800; }
 .sched { display: grid; gap: 8px; margin: 10px 0; padding: 10px 12px; border-radius: 12px; background: var(--card); border: 2px solid var(--line); }

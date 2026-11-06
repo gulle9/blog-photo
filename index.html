@@ -51,6 +51,12 @@
     <button id="send" class="primary big" disabled>올리기</button>
     <progress id="bar" max="100" value="0" hidden></progress>
     <p id="up-msg" class="muted"></p>
+    <div id="top5" class="top5" hidden>
+      <h3>다음에 쓸 글 TOP 5</h3>
+      <p id="top5-when" class="muted"></p>
+      <ul id="top5-list" class="jobs"></ul>
+      <p id="top5-msg" class="ok"></p>
+    </div>
     <p id="ios-tip" class="tip" hidden>아이폰은 공유 버튼 → "홈 화면에 추가"로 앱처럼 설치해야 알림을 받을 수 있습니다.</p>
   </section>
 
@@ -74,6 +80,30 @@
     </div>
     <button id="ch-send" class="primary big" disabled>이걸로 글 쓰기</button>
     <p id="ch-msg" class="muted"></p>
+  </section>
+
+  <!-- 통계 올리기: 네이버 블로그 앱 통계 > 유입분석 캡처 -->
+  <section id="v-stats" hidden>
+    <p class="muted">네이버 블로그 앱 → 통계 → 유입분석(유입경로·검색어) 화면을 캡처해서 올리세요. 기간이 보이게 찍어 주세요. 한 번에 10장까지.</p>
+    <label class="pick small">
+      <input id="stat-files" type="file" accept="image/*" multiple>
+      <span>📊 통계 캡처 고르기</span>
+    </label>
+    <button id="stat-send" class="primary big" disabled>통계 올리기</button>
+    <p id="stat-msg" class="muted"></p>
+    <ul id="stat-list" class="jobs"></ul>
+  </section>
+
+  <!-- 블로그 보고 온 손님 -->
+  <section id="v-guest" hidden>
+    <h3>블로그 보고 온 손님</h3>
+    <label class="field">날짜 <input id="g-date" type="date"></label>
+    <label class="field">차종(알면) <input id="g-car" type="text" maxlength="40" placeholder="예: 카니발"></label>
+    <label class="field">본 글(알면) <select id="g-job"></select></label>
+    <button id="g-save" class="primary big">기록하기</button>
+    <p id="g-msg" class="muted"></p>
+    <p id="g-sum" class="ok"></p>
+    <ul id="g-list" class="jobs"></ul>
   </section>
 
   <!-- 이번 주 예약 목록 -->
@@ -106,6 +136,8 @@
   <a href="#upload" data-v="upload">📷<span>사진 올리기</span></a>
   <a href="#jobs" data-v="jobs">⏳<span>진행 상황</span></a>
   <a href="#plan" data-v="plan">📅<span>예약</span></a>
+  <a href="#stats" data-v="stats">📊<span>통계</span></a>
+  <a href="#guest" data-v="guest">🙋<span>손님</span></a>
 </nav>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.js"></script>
