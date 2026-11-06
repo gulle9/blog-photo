@@ -636,19 +636,26 @@ const el = (tag, text, cls) => { const e = document.createElement(tag); if (text
 
 async function loadTop5() {
   const box = $("top5");
-  const { data, error } = await sb.from("mobile_suggestions").select("rank,car,keyword,site_name,grade,reason,updated_at").order("rank");
+  const { data, error } = await sb.from("mobile_suggestions").select("rank,car,keyword,site_name,grade,reason,facts,updated_at").order("rank");
   if (error || !data || !data.length) { box.hidden = true; return; }
   box.hidden = false;
   const list = $("top5-list");
-  list.replaceChildren(...data.map((s) => {
+  const items = [];
+  let site = null;
+  for (const s of data) {                                        // 블로그별로 나눠서
+    if (s.site_name !== site) { site = s.site_name; items.push(el("h4", `📝 ${site || "담당 블로그 미정"}`, "top-site")); }
+    items.push(s);
+  }
+  list.replaceChildren(...items.map((s) => {
+    if (s instanceof HTMLElement) return s;
     const li = el("li", null, "top");
     const head = el("div", null, "row");
-    head.append(el("b", `${s.rank}. ${s.keyword}`), el("span", `기회 ${s.grade || "-"} (추정치)`, "badge s-ask"));
+    head.append(el("b", `${s.facts?.site_rank || s.rank}. ${s.keyword}`), el("span", `기회 ${s.grade || "-"} (추정치)`, "badge s-ask"));
     li.append(head, el("div", `${s.car || ""} · 담당 ${s.site_name || "-"}`, "muted"), el("div", s.reason, "why"));
     li.classList.toggle("on", topPick?.keyword === s.keyword);
     li.addEventListener("click", () => {
       topPick = topPick?.keyword === s.keyword ? null : s;
-      list.querySelectorAll("li").forEach((x) => x.classList.toggle("on", x === li && !!topPick));
+      list.querySelectorAll("li.top").forEach((x) => x.classList.toggle("on", x === li && !!topPick));
       $("top5-msg").textContent = topPick ? `✓ '${s.keyword}'로 씁니다(한 줄 입력이 비어 있을 때). 같은 차 사진을 올려 주세요.` : "";
     });
     return li;

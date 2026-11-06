@@ -44,6 +44,7 @@ article h2 { font-size: 1.3rem; line-height: 1.4; }
 article h3 { font-size: 1.08rem; border-left: 4px solid var(--green); padding-left: 8px; margin-top: 26px; }
 article img { width: 100%; border-radius: 8px; margin: 8px 0 2px; }
 .top5 { margin-top: 16px; }
+.top-site { margin: 12px 0 4px; font-size: .95rem; }
 .top5 h3 { margin: 0 0 4px; font-size: 1.05rem; }
 li.top { cursor: pointer; border: 2px solid transparent; }
 li.top.on { border-color: var(--green); background: #dcfce7; }
