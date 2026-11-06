@@ -1,0 +1,16 @@
+{
+  "name": "블로그 사진",
+  "short_name": "블로그 사진",
+  "description": "시공 사진을 올리면 블로그 글을 자동으로 만듭니다",
+  "lang": "ko",
+  "start_url": "./#upload",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#03c75a",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
