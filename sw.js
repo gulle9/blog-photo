@@ -1,5 +1,5 @@
 // 앱 껍데기 저장(네트워크 우선, 끊기면 저장본) + 핸드폰 알림 표시·누르면 해당 글 열기
-const CACHE = "nbm-v4";
+const CACHE = "nbm-v5";
 const SHELL = ["./", "index.html", "style.css", "app.js", "parse.js", "config.js", "manifest.webmanifest", "icon-192.png", "samples/samples.json"];
 
 self.addEventListener("install", (e) => {

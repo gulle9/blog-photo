@@ -9,7 +9,7 @@
 const C = window.NBM_CONFIG || {};
 const sb = window.supabase.createClient(C.supabaseUrl, C.supabaseKey, { auth: { persistSession: true, autoRefreshToken: true } });
 const $ = (id) => document.getElementById(id);
-const MAX = 20, LONG_EDGE = 2560, VIDEO_MAX = 45 * 1024 * 1024;
+const MAX = 99, LONG_EDGE = 2560, VIDEO_MAX = 45 * 1024 * 1024;
 const STATUS = {
   uploaded: ["처리 중", "s-wait"], processing: ["처리 중", "s-wait"], needs_choice: ["고르기 필요", "s-ask"],
   written: ["글 완성", "s-done"], draft_saved: ["임시저장 완료", "s-saved"], failed: ["실패", "s-fail"],
@@ -93,9 +93,9 @@ $("login-form").addEventListener("submit", async (e) => {
 $("files").addEventListener("change", () => {
   const fs = [...$("files").files];
   picked = fs.slice(0, MAX);
-  $("up-msg").textContent = fs.length > MAX ? `최대 ${MAX}장입니다. 앞의 ${MAX}장만 올립니다.` : "";
+  $("up-msg").textContent = fs.length > MAX ? `한 번에 ${MAX}장까지 올라갑니다. 앞의 ${MAX}장만 올립니다.` : "";   // 저장 이름이 두 자리 번호(01~99)
   $("thumbs").replaceChildren(...picked.map((f) => { const im = document.createElement("img"); im.src = URL.createObjectURL(f); return im; }));
-  $("pick-text").textContent = picked.length ? `📷 ${picked.length}장 선택됨 (다시 고르기)` : "📷 사진 고르기 (시공 1건, 최대 20장)";
+  $("pick-text").textContent = picked.length ? `📷 ${picked.length}장 선택됨 (다시 고르기)` : "📷 사진 고르기 (시공 1건)";
   updateSend();
 });
 
@@ -215,7 +215,7 @@ $("send").addEventListener("click", async () => {
     readHint();
     $("video-text").textContent = "🎬 동영상 1개 (선택 사항, 45MB 이하)";
     $("thumbs").replaceChildren();
-    $("pick-text").textContent = "📷 사진 고르기 (시공 1건, 최대 20장)";
+    $("pick-text").textContent = "📷 사진 고르기 (시공 1건)";
     $("up-msg").textContent = "";
     location.hash = "#jobs";
   } catch (e) {
