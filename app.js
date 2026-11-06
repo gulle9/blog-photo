@@ -1,8 +1,9 @@
-// 블로그 사진 웹앱(핸드폰). 화면: 사진 올리기 · 진행 상황 · 고르기(필요할 때만) · 글 미리보기 (+ 처음 1번 로그인)
+// 블로그 사진 웹앱(핸드폰). 화면: 사진 올리기 · 진행 상황 · 예약 목록 · 고르기(필요할 때만) · 글 미리보기 (+ 처음 1번 로그인)
+// - 네이버에는 자동으로 넣지 않는다(CLAUDE.md 2장 2번). 사장님이 복사·사진 저장 후 네이버 블로그 앱에서 직접 붙여 넣고 예약한다.
 // - 공개용 값만 쓴다(config.js: Supabase 주소·공개 키·알림 공개 키). 비밀 키는 PC에만 있다.
 // - 사진은 긴 변 2560px로 줄여 올리고, 줄이기 전에 촬영 시각만 읽어 함께 보낸다. 동영상은 1개, 45MB 이하 그대로.
 // - '차종 패턴 색상' 한 줄(선택)은 parse.js로 나눠 answer에 담는다. 사장님 값은 AI 값보다 우선한다.
-// - 읽기·올리기는 로그인한 본인 것만 된다(DB·저장소 RLS). 웹앱이 바꿀 수 있는 것은 '고르기 필요'일 때 answer뿐.
+// - 읽기·올리기는 로그인한 본인 것만 된다(DB·저장소 RLS). 웹앱이 바꿀 수 있는 것은 '고르기 필요'일 때 answer, '글 완성'일 때 scheduled뿐.
 "use strict";
 
 const C = window.NBM_CONFIG || {};
@@ -68,11 +69,12 @@ function route() {
   const h = location.hash.slice(1);
   if (h.startsWith("job=")) return openJob(h.slice(4));
   if (h === "jobs") return showJobs();
+  if (h === "plan") return showPlan();
   show("upload");
 }
 
 function show(v) {
-  for (const s of ["login", "upload", "jobs", "choose", "preview"]) $("v-" + s).hidden = s !== v;
+  for (const s of ["login", "upload", "jobs", "choose", "preview", "plan"]) $("v-" + s).hidden = s !== v;
   document.querySelectorAll("nav a").forEach((a) => a.classList.toggle("on", a.dataset.v === v || ((v === "preview" || v === "choose") && a.dataset.v === "jobs")));
   if (v !== "jobs" && timer) { clearInterval(timer); timer = null; }
   if (v === "upload") $("ios-tip").hidden = !(isIOS() && !standalone());
@@ -317,7 +319,9 @@ async function openJob(id) {
   $("pv-info").textContent = "불러오는 중…";
   $("copybar").hidden = true;
   $("pv-draft").hidden = true;
-  const { data: j } = await sb.from("mobile_jobs").select("id,status,title,preview,note,choices,answer").eq("id", id).maybeSingle();
+  $("sched").hidden = true;
+  let { data: j, error } = await sb.from("mobile_jobs").select("id,status,title,preview,note,choices,answer,scheduled").eq("id", id).maybeSingle();
+  if (error) ({ data: j } = await sb.from("mobile_jobs").select("id,status,title,preview,note,choices,answer").eq("id", id).maybeSingle());
   if (!j) { $("pv-info").textContent = "글을 찾을 수 없습니다."; return; }
   if (j.status === "needs_choice") return showChoose(j);
   const pv = j.preview || {};
@@ -327,6 +331,7 @@ async function openJob(id) {
     const { data } = await sb.storage.from("previews").createSignedUrls(pv.photos, 3600);
     for (const x of data || []) if (x.signedUrl) urls[x.path] = x.signedUrl;
   }
+  const L = layout(pv);
   const add = (tag, text, cls) => { const el = document.createElement(tag); el.textContent = text; if (cls) el.className = cls; art.append(el); return el; };
   const paras = (text) => String(text || "").split("\n").filter((s) => s.trim()).forEach((s) => add("p", s));
   if (pv.title_candidates?.length) add("p", "제목 후보: " + pv.title_candidates.map((t, i) => `${i + 1}. ${t}`).join("  /  "), "tags");
@@ -335,6 +340,7 @@ async function openJob(id) {
   for (const s of pv.sections || []) {
     add("h3", s.heading);
     for (const p of s.photos || []) {
+      add("div", `[사진${L.order.indexOf(p) + 1}]`, "photo-no");          // 본문 복사의 [사진n] = 저장되는 사진 n번
       if (!urls[p]) continue;
       const im = document.createElement("img");
       im.src = urls[p];
@@ -350,31 +356,36 @@ async function openJob(id) {
     + (pv.cost_krw != null ? ` · 이 글 AI 비용 약 ${Math.round(pv.cost_krw).toLocaleString()}원` : "")
     + (pv.left_out?.length ? ` · 확실하지 않아 뺀 것: ${pv.left_out.join(", ")}` : "")
     + (pv.photos_removed ? " · 사진 미리보기 기간(30일)이 지났습니다" : "");
-  showDraft(pv.draft);
-  const tags = (pv.tags || []).map((t) => "#" + String(t).replace(/^#/, "")).join(" ");
-  const body = pv.body_text || String(pv.plain_text || "").split("\n").slice(1).filter((l) => l !== tags).join("\n").trim();
+  $("pv-draft").textContent = "붙여 넣기 순서: ① 사진 순서대로 저장 → ② 네이버 블로그 앱에서 제목·본문 붙여 넣기 → "
+    + "③ 본문의 [사진1]·[사진2] 자리에 같은 번호 사진 넣기 → ④ 태그 붙여 넣기 → ⑤ 예약 발행 후 아래 '예약 완료'";
+  $("pv-draft").className = "draft";
+  $("pv-draft").hidden = false;
   copyButton("cp-title", "📋 제목 복사", pv.title);
-  copyButton("cp-body", "📋 본문 복사", body);
-  copyButton("cp-tags", "📋 태그 복사", tags);
-  const order = (pv.photos || []).filter((p) => urls[p]);
-  $("cp-photos").hidden = !order.length;
-  $("cp-photos").textContent = `📷 사진 ${order.length}장 모두 저장`;
-  $("cp-photos").onclick = () => savePhotos(order.map((p) => urls[p]));
+  copyButton("cp-body", "📋 본문 복사", L.body);
+  copyButton("cp-tags", "📋 태그 복사", L.tags);
+  const order = L.order.filter((p) => urls[p]);
+  const files = order.length === L.order.length ? prefetchPhotos(order.map((p) => urls[p]), j.id) : null;
+  $("cp-photos").hidden = !files;
+  $("cp-photos").textContent = `📷 사진 ${order.length}장 순서대로 저장`;
+  $("cp-photos").onclick = () => savePhotos(files);
   $("copybar").hidden = false;
+  showSchedule(j, pv);
 }
 
-function showDraft(d) {
-  const box = $("pv-draft");
-  if (!d || !d.status) { box.hidden = true; return; }
-  const msg = {
-    auto: ["⏳ PC가 네이버에 자동 임시저장할 차례를 기다리는 중입니다.", ""],
-    saved: ["✅ 네이버에 임시저장했습니다. 네이버 블로그 앱 > 글쓰기 > 임시저장 글에서 확인 후 발행하세요." + (d.note ? ` (${d.note})` : ""), "ok"],
-    failed: [`⚠ 자동 임시저장 실패(${d.step || "-"}) — 아래 복사 버튼으로 올려 주세요.`, "bad"],
-    copy: ["이 블로그는 복사 방식입니다: 제목·본문·태그를 복사해 네이버 앱에 붙여넣고, 사진은 저장해 순서대로 넣으세요.", ""],
-  }[d.status] || [d.status, ""];
-  box.textContent = msg[0];
-  box.className = "draft " + msg[1];
-  box.hidden = false;
+// 본문 복사용 글: 사진 자리는 [사진1]처럼(저장되는 사진 파일 번호와 같음). 사진 번호 = 글에 처음 나오는 순서.
+function layout(pv) {
+  const order = [];
+  for (const s of pv.sections || []) for (const p of s.photos || []) if (!order.includes(p)) order.push(p);
+  const out = [pv.intro || "", ""];
+  for (const s of pv.sections || []) {
+    out.push(`■ ${s.heading}`);
+    for (const p of s.photos || []) out.push(`[사진${order.indexOf(p) + 1}]`);
+    out.push(s.body || "", "");
+  }
+  if (pv.video) out.push("[동영상] ← 올린 시공 동영상(번호판·얼굴 확인)", "");
+  out.push(pv.outro || "");
+  return { order, body: out.join("\n").replace(/\n{3,}/g, "\n\n").trim(),
+           tags: (pv.tags || []).map((t) => "#" + String(t).replace(/^#/, "")).join(" ") };
 }
 
 function copyButton(id, label, text) {
@@ -388,32 +399,134 @@ function copyButton(id, label, text) {
   };
 }
 
-async function savePhotos(list) {
+// 미리보기를 열 때 사진을 미리 받아 둔다(아이폰은 버튼을 누른 직후에만 저장 창을 열 수 있어서).
+// 파일 이름 = 순서 번호: 블로그_<글번호 앞 6자리>_사진01.jpg …
+function prefetchPhotos(list, jobId) {
+  return Promise.all(list.map(async (u, i) => {
+    const blob = await (await fetch(u)).blob();
+    return new File([blob], `블로그_${String(jobId).slice(0, 6)}_사진${String(i + 1).padStart(2, "0")}.jpg`, { type: "image/jpeg" });
+  }));
+}
+
+function isAndroid() { return /Android/i.test(navigator.userAgent); }
+
+async function savePhotos(filesP) {
   const b = $("cp-photos");
   const label = b.textContent;
-  b.textContent = "사진 받는 중…";
+  let files;
+  try { files = await filesP; } catch (_) { b.textContent = "사진을 받지 못했습니다 — 화면을 새로 열어 주세요"; return; }
   try {
-    const files = [];
-    for (const [i, u] of list.entries()) {
-      const blob = await (await fetch(u)).blob();
-      files.push(new File([blob], `${String(i + 1).padStart(2, "0")}.jpg`, { type: "image/jpeg" }));
-    }
-    if (navigator.canShare && navigator.canShare({ files })) {
-      await navigator.share({ files, title: "블로그 사진" });         // 공유 창에서 '이미지 저장'(글 순서대로 01, 02…)
+    if (!isAndroid() && navigator.canShare && navigator.canShare({ files })) {
+      // 아이폰: 공유 창에서 '이미지 n개 저장' → 사진 앱에 순서대로 저장
+      await navigator.share({ files });
+      b.textContent = "저장 완료 — 사진 앱 최근 항목에 순서대로 있습니다";
     } else {
+      // 안드로이드·PC: 다운로드로 저장(갤러리 'Download' 앨범, 이름 순 = 글 순서). 처음 한 번 '여러 파일 다운로드 허용'
       for (const f of files) {
         const a = document.createElement("a");
         a.href = URL.createObjectURL(f);
         a.download = f.name;
+        document.body.append(a);
         a.click();
-        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+        a.remove();
+        await new Promise((r) => setTimeout(r, 350));
+        setTimeout(() => URL.revokeObjectURL(a.href), 10000);
       }
+      b.textContent = `${files.length}장 저장 — 갤러리 'Download' 앨범`;
     }
-    b.textContent = "저장 창을 열었습니다 ✓";
   } catch (e) {
-    b.textContent = e && e.name === "AbortError" ? label : "사진 저장 실패 — 사진을 길게 눌러 저장하세요";
+    if (e && e.name === "AbortError") b.textContent = label;
+    else if (e && e.name === "NotAllowedError") b.textContent = "준비됐습니다 — 한 번 더 눌러 주세요";
+    else b.textContent = "사진 저장 실패 — 사진을 길게 눌러 저장하세요";
   }
-  setTimeout(() => { b.textContent = label; }, 3000);
+  setTimeout(() => { b.textContent = label; }, 5000);
+}
+
+// ---------------- 예약(사장님이 네이버 앱에서 직접 예약한 것을 기록) ----------------
+const RECO_HOUR = 9;          // 추천 시각 고정(매일 오전 9시). 일부러 섞지 않는다.
+const DAY = 864e5;
+const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const localIso = (d) => `${ymd(d)}T${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+const fmt = (s) => new Date(s).toLocaleString("ko-KR", { month: "numeric", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit" });
+
+// 블로그별로 하루 1편: 내일부터, 이미 예약된 날은 건너뛰고 오래된 글부터 한 날짜씩.
+function planSchedule(jobs) {
+  const taken = {}, plan = {};
+  for (const j of jobs) if (j.scheduled?.at) (taken[j.site] ||= new Set()).add(j.scheduled.at.slice(0, 10));
+  const start = new Date(); start.setHours(RECO_HOUR, 0, 0, 0);
+  for (const j of [...jobs].filter((x) => !x.scheduled).sort((a, b) => a.created_at.localeCompare(b.created_at))) {
+    const used = (taken[j.site] ||= new Set());
+    let d = new Date(start.getTime() + DAY);
+    while (used.has(ymd(d))) d = new Date(d.getTime() + DAY);
+    used.add(ymd(d));
+    plan[j.id] = localIso(d);
+  }
+  return plan;
+}
+
+async function writtenJobs() {
+  let { data, error } = await sb.from("mobile_jobs").select("id,title,created_at,scheduled,site:preview->>site_name")
+    .eq("status", "written").order("created_at", { ascending: true }).limit(200);
+  if (error) return { jobs: null, error };
+  return { jobs: data.map((j) => ({ ...j, site: j.site || "담당 블로그 미정" })) };
+}
+
+async function showSchedule(j, pv) {
+  const box = $("sched");
+  box.hidden = false;
+  const { jobs, error } = await writtenJobs();
+  if (error || !("scheduled" in j)) { $("sched-msg").textContent = "예약 기록은 DB 준비 후 켜집니다."; $("sched-at").hidden = $("sched-done").hidden = true; return; }
+  $("sched-at").hidden = $("sched-done").hidden = false;
+  const reco = planSchedule(jobs)[j.id] || localIso(new Date(Date.now() + DAY));      // 예약 목록 화면과 같은 추천
+  const render = () => {
+    $("sched-msg").textContent = j.scheduled?.at ? `✅ 예약됨: ${j.scheduled.blog || ""} ${fmt(j.scheduled.at)}` : `추천: ${pv.site_name || ""} ${fmt(reco)} (같은 블로그 하루 1편)`;
+    $("sched-done").textContent = j.scheduled?.at ? "예약 취소 기록" : "✅ 예약 완료";
+  };
+  $("sched-at").value = j.scheduled?.at || reco;
+  render();
+  $("sched-done").onclick = async () => {
+    const val = j.scheduled?.at ? null : { blog: pv.site_name || "", at: $("sched-at").value, marked_at: new Date().toISOString() };
+    if (val && !val.at) return;
+    const { error: e } = await sb.from("mobile_jobs").update({ scheduled: val }).eq("id", j.id);
+    if (e) { $("sched-msg").textContent = "기록 실패 — 잠시 뒤 다시 눌러 주세요"; return; }
+    j.scheduled = val;
+    render();
+  };
+}
+
+// 이번 주 예약 목록: 아직 예약 안 한 완성 글을 블로그별로, 추천 날짜와 함께
+async function showPlan() {
+  show("plan");
+  const list = $("plan-list");
+  list.replaceChildren();
+  const { jobs, error } = await writtenJobs();
+  if (error) { $("plan-msg").textContent = "예약 목록은 DB 준비 후 켜집니다."; return; }
+  const plan = planSchedule(jobs);
+  const weekEnd = Date.now() + 7 * DAY;
+  const sites = [...new Set(jobs.map((j) => j.site))];
+  $("plan-msg").textContent = jobs.some((j) => !j.scheduled) ? `추천 시각은 매일 ${RECO_HOUR}시(고정), 같은 블로그는 하루 1편. 글을 눌러 붙여 넣고 예약한 뒤 '예약 완료'를 누르세요.`
+    : "예약할 글이 없습니다.";
+  for (const site of sites) {
+    const mine = jobs.filter((j) => j.site === site);
+    const todo = mine.filter((j) => !j.scheduled).sort((a, b) => plan[a.id].localeCompare(plan[b.id]));
+    const done = mine.filter((j) => j.scheduled?.at && new Date(j.scheduled.at) >= new Date(Date.now() - DAY) && new Date(j.scheduled.at) <= weekEnd);
+    if (!todo.length && !done.length) continue;
+    const h = document.createElement("h3");
+    h.textContent = `${site} — 예약할 글 ${todo.length}편`;
+    list.append(h);
+    for (const j of [...todo, ...done]) {
+      const li = document.createElement("li");
+      const when = document.createElement("span");
+      when.className = "badge " + (j.scheduled ? "s-done" : "s-ask");
+      when.textContent = j.scheduled ? `예약됨 ${fmt(j.scheduled.at)}` : `추천 ${fmt(plan[j.id])}`;
+      const t = document.createElement("div");
+      t.className = "title";
+      t.textContent = j.title || "(제목 없음)";
+      li.append(when, t);
+      li.addEventListener("click", () => { location.hash = "#job=" + j.id; });
+      list.append(li);
+    }
+  }
 }
 
 // ---------------- 고르기(AI가 확실하지 않을 때만) ----------------
