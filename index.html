@@ -38,16 +38,20 @@
       <input id="files" type="file" accept="image/*" multiple>
       <span id="pick-text">📷 사진 고르기 (시공 1건)</span>
     </label>
+    <p class="tip">📸 촬영 안내: 작업 전 실내 전체 → <b>떼어낸 순정 매트·더러운 바닥 가까이 2~3장</b> → 작업 중 → 완성 후 실내 전체·디테일. 번호판·얼굴은 자동으로 가립니다.</p>
     <div id="thumbs" class="thumbs"></div>
     <input id="hint" type="text" class="line" autocomplete="off" enterkeyhint="done"
-           placeholder="차종 패턴 색상 (예: 카니발 P3 마일드아이보리)">
-    <p id="hint-msg" class="muted">비워 두면 AI가 사진과 견본으로 맞힙니다(선택 사항).</p>
+           placeholder="차종 패턴 색상 / 손님 사연 (예: 카니발 P3 블랙 / 애 둘, 우유 냄새)">
+    <p id="hint-msg" class="muted">비워 두면 AI가 사진과 견본으로 맞힙니다(선택 사항). '/' 뒤에 쓴 손님 사연은 글에 그대로의 뜻으로만 씁니다.</p>
     <div id="hint-pick" class="tiles" hidden></div>
     <label class="pick small">
       <input id="video" type="file" accept="video/mp4,video/quicktime,.mp4,.mov">
       <span id="video-text">🎬 동영상 고르기 (1개, 선택 사항, 45MB 이하)</span>
     </label>
     <p id="video-msg" class="muted"></p>
+    <label class="line-label">글을 쓸 블로그
+      <select id="only-blog" class="line"><option value="">모든 블로그에 1편씩(사진 자동 나눔)</option></select>
+    </label>
     <button id="send" class="primary big" disabled>올리기</button>
     <progress id="bar" max="100" value="0" hidden></progress>
     <p id="up-msg" class="muted"></p>
@@ -115,6 +119,7 @@
   <!-- ③ 글 미리보기 -->
   <section id="v-preview" hidden>
     <a href="#jobs" class="back">← 진행 상황</a>
+    <div id="pv-tabs" class="pv-tabs" hidden></div>
     <div id="pv-info" class="info"></div>
     <div id="pv-draft" class="draft" hidden></div>
     <div id="copybar" class="copybar" hidden>

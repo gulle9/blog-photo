@@ -86,3 +86,11 @@ nav a.on { color: var(--green); font-weight: 700; }
 #v-choose h3 { font-size: 1.05rem; margin: 16px 0 4px; }
 .s-ask { background: #ffedd5; color: #c2410c; }
 .video-slot { border: 2px dashed var(--green); border-radius: 10px; padding: 12px; margin: 14px 0; font-size: .92rem; }
+
+/* 블로그별 글 탭(같은 시공 건, 2026-11-07) */
+.pv-tabs { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
+.pv-tabs .tab { flex: 1 1 40%; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); font-size: .95rem; }
+.pv-tabs .tab.on { background: #03c75a; color: #fff; border-color: #03c75a; }
+.line-label { display: block; margin: 10px 0; font-size: .9rem; }
+.line-label select { width: 100%; margin-top: 4px; }
+p.q { font-weight: 600; margin-bottom: 0; }

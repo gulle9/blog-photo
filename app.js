@@ -107,7 +107,7 @@ $("hint").addEventListener("input", () => { clearTimeout(readHint.t); readHint.t
 $("hint").addEventListener("change", readHint);
 
 function readHint() {
-  const text = $("hint").value;
+  const text = $("hint").value.split("/")[0];                  // '/' 뒤는 손님 사연(나누지 않음)
   hint = SAMPLES && window.NBM_parseLine ? window.NBM_parseLine(text, SAMPLES) : null;
   hintPick = null;
   const box = $("hint-pick"), msg = $("hint-msg");
@@ -144,14 +144,22 @@ function updateSend() {
 }
 
 function answerFromHint() {
-  const text = $("hint").value.trim();
-  if (!text && topPick) return { keyword: topPick.keyword, car: topPick.car || undefined, from: "top5" };   // 한 줄이 비면 고른 추천으로
-  if (!text || !hint) return null;
-  const a = { text: text.slice(0, 50) };                       // DB 한도 500바이트(한글 3바이트) 안에 들게
-  if (hint.car) a.car = hint.car;
-  const code = hintPick || hint.code;
-  if (code) { const s = sampleOf(code); Object.assign(a, { sample: code, pattern: s.pattern, color: s.name }); }
-  else { if (hint.pattern) a.pattern = hint.pattern; if (hint.color) a.color = hint.color; }
+  const [head, ...rest] = $("hint").value.trim().split("/");
+  const text = head.trim(), story = rest.join("/").trim();
+  const only = $("only-blog").value;
+  let a = null;
+  if (!text && topPick) a = { keyword: topPick.keyword, car: topPick.car || undefined, from: "top5" };   // 한 줄이 비면 고른 추천으로
+  else if (text && hint) {
+    a = { text: text.slice(0, 40) };
+    if (hint.car) a.car = hint.car;
+    const code = hintPick || hint.code;
+    if (code) { const s = sampleOf(code); Object.assign(a, { sample: code, pattern: s.pattern, color: s.name }); }
+    else { if (hint.pattern) a.pattern = hint.pattern; if (hint.color) a.color = hint.color; }
+  }
+  if (story) (a ||= {}).story = story.slice(0, 60);            // 손님 사연: 적은 뜻 그대로만 글에 씀
+  if (only) (a ||= {}).only_blog = only;                       // 이 건은 한 블로그만
+  const size = (x) => new TextEncoder().encode(JSON.stringify(x)).length;
+  while (a && a.story && size(a) > 480) a.story = a.story.slice(0, -1);   // DB 한도 500바이트(한글 3바이트)
   return a;
 }
 
@@ -325,6 +333,7 @@ async function openJob(id) {
   $("copybar").hidden = true;
   $("pv-draft").hidden = true;
   $("sched").hidden = true;
+  $("pv-tabs").hidden = true;
   let { data: j, error } = await sb.from("mobile_jobs").select("id,status,title,preview,note,choices,answer,scheduled").eq("id", id).maybeSingle();
   if (error) ({ data: j } = await sb.from("mobile_jobs").select("id,status,title,preview,note,choices,answer").eq("id", id).maybeSingle());
   if (!j) { $("pv-info").textContent = "글을 찾을 수 없습니다."; return; }
@@ -336,61 +345,93 @@ async function openJob(id) {
     const { data } = await sb.storage.from("previews").createSignedUrls(pv.photos, 3600);
     for (const x of data || []) if (x.signedUrl) urls[x.path] = x.signedUrl;
   }
-  const L = layout(pv);
-  const add = (tag, text, cls) => { const el = document.createElement(tag); el.textContent = text; if (cls) el.className = cls; art.append(el); return el; };
+  const posts = pv.posts?.length ? pv.posts : [pv];             // 블로그별 글(예전 글은 1편)
+  const tabs = $("pv-tabs");
+  tabs.replaceChildren(...posts.map((P, k) => {
+    const b = el("button", `${k + 1}. ${P.site_name || pv.site_name || "블로그"}`, "tab");
+    b.onclick = () => renderPost(j, pv, posts, k, urls);
+    return b;
+  }));
+  tabs.hidden = posts.length < 2;
+  renderPost(j, pv, posts, 0, urls);
+}
+
+function renderPost(j, pv, posts, k, urls) {
+  const P = posts[k];
+  const art = $("pv");
+  art.replaceChildren();
+  $("pv-tabs").querySelectorAll("button").forEach((b, i) => b.classList.toggle("on", i === k));
+  const L = layout(P, pv);
+  const add = (tag, text, cls) => { const e = document.createElement(tag); e.textContent = text; if (cls) e.className = cls; art.append(e); return e; };
   const paras = (text) => String(text || "").split("\n").filter((s) => s.trim()).forEach((s) => add("p", s));
-  if (pv.title_candidates?.length) add("p", "제목 후보: " + pv.title_candidates.map((t, i) => `${i + 1}. ${t}`).join("  /  "), "tags");
-  add("h2", pv.title);
-  paras(pv.intro);
-  for (const s of pv.sections || []) {
+  if (P.title_candidates?.length) add("p", "제목 후보: " + P.title_candidates.map((x, i) => `${i + 1}. ${x}`).join("  /  "), "tags");
+  if (P.home_title) add("p", "홈판용 제목: " + P.home_title, "tags");
+  add("h2", P.title);
+  paras(P.intro);
+  const photo = (p, ref) => {
+    add("div", `[사진${L.order.indexOf(p) + 1}]` + (ref ? " 참고 사진(이번 손님 차 아님)" : ""), "photo-no");   // 본문 복사의 [사진n] = 저장되는 사진 n번
+    if (!urls[p]) return;
+    const im = document.createElement("img");
+    im.src = urls[p];
+    im.loading = "lazy";
+    art.append(im);
+  };
+  for (const s of P.sections || []) {
     add("h3", s.heading);
-    for (const p of s.photos || []) {
-      add("div", `[사진${L.order.indexOf(p) + 1}]`, "photo-no");          // 본문 복사의 [사진n] = 저장되는 사진 n번
-      if (!urls[p]) continue;
-      const im = document.createElement("img");
-      im.src = urls[p];
-      im.loading = "lazy";
-      art.append(im);
-    }
+    for (const p of s.refs || []) photo(p, true);
+    for (const p of s.photos || []) photo(p, false);
     paras(s.body);
   }
   if (pv.video) add("div", "🎬 [동영상] 자리 — 올린 시공 동영상을 여기에 넣으세요. 동영상은 자동 가림이 안 되므로 번호판·얼굴이 보이면 넣지 마세요.", "video-slot");
-  paras(pv.outro);
-  add("p", (pv.tags || []).map((t) => "#" + String(t).replace(/^#/, "")).join(" "), "tags");
-  $("pv-info").textContent = `${(STATUS[j.status] || [j.status])[0]} · 담당 블로그 ${pv.site_name || "-"} · 검색어 ${pv.keyword || "-"}`
-    + (pv.cost_krw != null ? ` · 이 글 AI 비용 약 ${Math.round(pv.cost_krw).toLocaleString()}원` : "")
+  if (P.qna?.length) { add("h3", "자주 묻는 질문"); for (const q of P.qna) { add("p", "Q. " + q.q, "q"); add("p", "A. " + q.a); } }
+  if (P.summary?.length) { add("h3", "한눈에 정리"); for (const r of P.summary) add("p", `${r.item}: ${r.value}`); }
+  paras(P.outro);
+  if (P.related_posts?.length) { add("h3", "함께 보면 좋은 글"); for (const r of P.related_posts) add("p", "· " + r.title); }
+  paras(P.store_info);
+  add("p", (P.tags || []).map((x) => "#" + String(x).replace(/^#/, "")).join(" "), "tags");
+  $("pv-info").textContent = `${(STATUS[j.status] || [j.status])[0]} · ${posts.length > 1 ? `블로그별 글 ${posts.length}편 중 ${k + 1}번 · ` : ""}`
+    + `블로그 ${P.site_name || pv.site_name || "-"} · 주 검색어 ${P.keyword || pv.keyword || "-"}`
+    + (P.sub_keywords?.length ? ` · 보조 ${P.sub_keywords.join(", ")}` : "")
+    + (P.grade ? ` · 점수 ${P.grade} ${Math.round(P.score)}점` : "")
+    + (pv.cost_krw != null ? ` · 이 시공 건 AI 비용 약 ${Math.round(pv.cost_krw).toLocaleString()}원` : "")
     + (pv.left_out?.length ? ` · 확실하지 않아 뺀 것: ${pv.left_out.join(", ")}` : "")
     + (pv.photos_removed ? " · 사진 미리보기 기간(30일)이 지났습니다" : "");
   $("pv-draft").textContent = "붙여 넣기 순서: ① 사진 순서대로 저장 → ② 네이버 블로그 앱에서 제목·본문 붙여 넣기 → "
-    + "③ 본문의 [사진1]·[사진2] 자리에 같은 번호 사진 넣기 → ④ 태그 붙여 넣기 → ⑤ 예약 발행 후 아래 '예약 완료'";
+    + "③ 본문의 [사진1]·[사진2] 자리에 같은 번호 사진 넣기 → ④ 태그 붙여 넣기 → ⑤ 예약 발행 후 아래 '예약 완료'"
+    + (posts.length > 1 ? " · 블로그마다 따로 붙여 넣고, 위 단추로 다른 블로그 글로 바꿉니다" : "");
   $("pv-draft").className = "draft";
   $("pv-draft").hidden = false;
-  copyButton("cp-title", "📋 제목 복사", pv.title);
+  copyButton("cp-title", "📋 제목 복사", P.title);
   copyButton("cp-body", "📋 본문 복사", L.body);
   copyButton("cp-tags", "📋 태그 복사", L.tags);
   const order = L.order.filter((p) => urls[p]);
-  const files = order.length === L.order.length ? prefetchPhotos(order.map((p) => urls[p]), j.id) : null;
+  const files = order.length === L.order.length ? prefetchPhotos(order.map((p) => urls[p]), j.id, k) : null;
   $("cp-photos").hidden = !files;
   $("cp-photos").textContent = `📷 사진 ${order.length}장 순서대로 저장`;
   $("cp-photos").onclick = () => savePhotos(files);
   $("copybar").hidden = false;
-  showSchedule(j, pv);
+  showSchedule(j, P, k);
 }
 
-// 본문 복사용 글: 사진 자리는 [사진1]처럼(저장되는 사진 파일 번호와 같음). 사진 번호 = 글에 처음 나오는 순서.
-function layout(pv) {
+// 본문 복사용 글: 사진 자리는 [사진1]처럼(저장되는 사진 파일 번호와 같음). 사진 번호 = 글에 처음 나오는 순서(참고 사진 포함).
+function layout(P, pv) {
   const order = [];
-  for (const s of pv.sections || []) for (const p of s.photos || []) if (!order.includes(p)) order.push(p);
-  const out = [pv.intro || "", ""];
-  for (const s of pv.sections || []) {
+  for (const s of P.sections || []) for (const p of [...(s.refs || []), ...(s.photos || [])]) if (!order.includes(p)) order.push(p);
+  const out = [P.intro || "", ""];
+  for (const s of P.sections || []) {
     out.push(`■ ${s.heading}`);
+    for (const p of s.refs || []) out.push(`[사진${order.indexOf(p) + 1}] (참고 사진)`);
     for (const p of s.photos || []) out.push(`[사진${order.indexOf(p) + 1}]`);
     out.push(s.body || "", "");
   }
   if (pv.video) out.push("[동영상] ← 올린 시공 동영상(번호판·얼굴 확인)", "");
-  out.push(pv.outro || "");
+  if (P.qna?.length) out.push("■ 자주 묻는 질문", ...P.qna.map((q) => `Q. ${q.q}\nA. ${q.a}`), "");
+  if (P.summary?.length) out.push("■ 한눈에 정리", ...P.summary.map((r) => `${r.item}: ${r.value}`), "");
+  out.push(P.outro || "", "");
+  if (P.related_posts?.length) out.push("■ 함께 보면 좋은 글", ...P.related_posts.map((r) => `${r.title} ${r.url || ""}`.trim()), "");
+  if (P.store_info) out.push(P.store_info);
   return { order, body: out.join("\n").replace(/\n{3,}/g, "\n\n").trim(),
-           tags: (pv.tags || []).map((t) => "#" + String(t).replace(/^#/, "")).join(" ") };
+           tags: (P.tags || []).map((x) => "#" + String(x).replace(/^#/, "")).join(" ") };
 }
 
 function copyButton(id, label, text) {
@@ -406,10 +447,10 @@ function copyButton(id, label, text) {
 
 // 미리보기를 열 때 사진을 미리 받아 둔다(아이폰은 버튼을 누른 직후에만 저장 창을 열 수 있어서).
 // 파일 이름 = 순서 번호: 블로그_<글번호 앞 6자리>_사진01.jpg …
-function prefetchPhotos(list, jobId) {
+function prefetchPhotos(list, jobId, k = 0) {
   return Promise.all(list.map(async (u, i) => {
     const blob = await (await fetch(u)).blob();
-    return new File([blob], `블로그_${String(jobId).slice(0, 6)}_사진${String(i + 1).padStart(2, "0")}.jpg`, { type: "image/jpeg" });
+    return new File([blob], `블로그_${String(jobId).slice(0, 6)}${k ? "_" + (k + 1) : ""}_사진${String(i + 1).padStart(2, "0")}.jpg`, { type: "image/jpeg" });
   }));
 }
 
@@ -454,44 +495,87 @@ const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0
 const localIso = (d) => `${ymd(d)}T${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 const fmt = (s) => new Date(s).toLocaleString("ko-KR", { month: "numeric", day: "numeric", weekday: "short", hour: "2-digit", minute: "2-digit" });
 
-// 블로그별로 하루 1편: 내일부터, 이미 예약된 날은 건너뛰고 오래된 글부터 한 날짜씩.
-function planSchedule(jobs) {
-  const taken = {}, plan = {};
-  for (const j of jobs) if (j.scheduled?.at) (taken[j.site] ||= new Set()).add(j.scheduled.at.slice(0, 10));
-  const start = new Date(); start.setHours(RECO_HOUR, 0, 0, 0);
-  for (const j of [...jobs].filter((x) => !x.scheduled).sort((a, b) => a.created_at.localeCompare(b.created_at))) {
-    const used = (taken[j.site] ||= new Set());
-    let d = new Date(start.getTime() + DAY);
-    while (used.has(ymd(d))) d = new Date(d.getTime() + DAY);
+// 예약 기록: 예전 {blog, at, marked_at}(글 1편) 또는 {v: {"0": {at, m}, "1": {...}}}(블로그별 글 번호마다). DB 한도 300바이트.
+function schedOf(j, k) {
+  const s = j.scheduled;
+  if (!s) return null;
+  if (s.v) return s.v[k] || null;
+  return k === 0 && s.at ? s : null;
+}
+function withSched(j, k, val) {
+  const v = j.scheduled?.v ? { ...j.scheduled.v } : (j.scheduled?.at ? { 0: { at: j.scheduled.at, m: j.scheduled.marked_at?.slice(0, 16) } } : {});
+  if (val) v[k] = val; else delete v[k];
+  return Object.keys(v).length ? { v } : null;
+}
+
+// 추천 날짜(PC 설정 policy_rules.json publishing): 블로그별 하루 1편, 같은 시공 건의 블로그별 글은 앞 글보다 2~3일 뒤,
+// 블로그별 처음 2주는 주 2~3편만, 그 뒤 주 5편까지. 이미 예약한 날·주 편수는 건너뛴다.
+function planSchedule(items) {
+  const R = items.find((x) => x.rules)?.rules || { case_gap_days: [2, 3], ramp_weeks: 2, ramp_per_week: 3, after_per_week: 5 };
+  const taken = {}, start = {}, plan = {};
+  const day0 = new Date(); day0.setHours(RECO_HOUR, 0, 0, 0);
+  for (const x of items) if (x.at) {
+    (taken[x.site] ||= new Set()).add(x.at.slice(0, 10));
+    const d = new Date(x.at.slice(0, 10) + "T00:00");
+    if (!start[x.site] || d < start[x.site]) start[x.site] = d;
+  }
+  const weekOf = (site, d) => Math.floor((d - start[site]) / (7 * DAY));
+  const cap = (site, d) => (d - start[site] < R.ramp_weeks * 7 * DAY ? R.ramp_per_week : R.after_per_week);
+  const count = (site, w) => [...(taken[site] || [])].filter((s) => weekOf(site, new Date(s + "T00:00")) === w).length;
+  const first = {};
+  for (const x of [...items].filter((y) => !y.at).sort((a, b) => a.created_at.localeCompare(b.created_at) || a.k - b.k)) {
+    const base = x.k > 0 && first[x.job] ? new Date(first[x.job].getTime() + (x.offset || R.case_gap_days[0]) * DAY) : new Date(day0.getTime() + DAY);
+    let d = base < day0 ? new Date(day0.getTime() + DAY) : base;
+    const used = (taken[x.site] ||= new Set());
+    for (let n = 0; n < 120; n++, d = new Date(d.getTime() + DAY)) {
+      if (!start[x.site]) start[x.site] = new Date(ymd(d) + "T00:00");
+      if (!used.has(ymd(d)) && count(x.site, weekOf(x.site, new Date(ymd(d) + "T00:00"))) < cap(x.site, new Date(ymd(d) + "T00:00"))) break;
+    }
     used.add(ymd(d));
-    plan[j.id] = localIso(d);
+    if (x.k === 0) first[x.job] = d;
+    plan[x.key] = localIso(d);
   }
   return plan;
 }
 
-async function writtenJobs() {
-  let { data, error } = await sb.from("mobile_jobs").select("id,title,created_at,scheduled,site:preview->>site_name")
+// 완성 글 → 블로그별 글 목록(글 1편 = 항목 1개). 미리보기 전체 대신 요약(post_meta)만 받는다.
+async function writtenItems() {
+  let { data, error } = await sb.from("mobile_jobs")
+    .select("id,title,created_at,scheduled,site:preview->>site_name,meta:preview->post_meta,rules:preview->schedule_rules")
     .eq("status", "written").order("created_at", { ascending: true }).limit(200);
-  if (error) return { jobs: null, error };
-  return { jobs: data.map((j) => ({ ...j, site: j.site || "담당 블로그 미정" })) };
+  if (error) return { items: null, error };
+  const items = [];
+  for (const j of data) {
+    const metas = j.meta?.length ? j.meta : [{ site_name: j.site, title: j.title, offset_days: 0 }];
+    metas.forEach((m, k) => {
+      const s = schedOf(j, k);
+      items.push({ key: `${j.id}:${k}`, job: j.id, k, site: m.site_name || "담당 블로그 미정", title: m.title || j.title,
+                   created_at: j.created_at, offset: m.offset_days || 0, at: s?.at || null, rules: j.rules, j });
+    });
+  }
+  return { items };
 }
 
-async function showSchedule(j, pv) {
+async function showSchedule(j, P, k) {
   const box = $("sched");
   box.hidden = false;
-  const { jobs, error } = await writtenJobs();
+  const { items, error } = await writtenItems();
   if (error || !("scheduled" in j)) { $("sched-msg").textContent = "예약 기록은 DB 준비 후 켜집니다."; $("sched-at").hidden = $("sched-done").hidden = true; return; }
   $("sched-at").hidden = $("sched-done").hidden = false;
-  const reco = planSchedule(jobs)[j.id] || localIso(new Date(Date.now() + DAY));      // 예약 목록 화면과 같은 추천
+  const reco = planSchedule(items)[`${j.id}:${k}`] || localIso(new Date(Date.now() + DAY));      // 예약 목록 화면과 같은 추천
   const render = () => {
-    $("sched-msg").textContent = j.scheduled?.at ? `✅ 예약됨: ${j.scheduled.blog || ""} ${fmt(j.scheduled.at)}` : `추천: ${pv.site_name || ""} ${fmt(reco)} (같은 블로그 하루 1편)`;
-    $("sched-done").textContent = j.scheduled?.at ? "예약 취소 기록" : "✅ 예약 완료";
+    const s = schedOf(j, k);
+    $("sched-msg").textContent = s?.at ? `✅ 예약됨: ${P.site_name || ""} ${fmt(s.at)}`
+      : `추천: ${P.site_name || ""} ${fmt(reco)} (같은 블로그 하루 1편${k ? ", 같은 시공 건 앞 글보다 2~3일 뒤" : ""})`;
+    $("sched-done").textContent = s?.at ? "예약 취소 기록" : "✅ 예약 완료";
   };
-  $("sched-at").value = j.scheduled?.at || reco;
+  $("sched-at").value = schedOf(j, k)?.at || reco;
   render();
   $("sched-done").onclick = async () => {
-    const val = j.scheduled?.at ? null : { blog: pv.site_name || "", at: $("sched-at").value, marked_at: new Date().toISOString() };
-    if (val && !val.at) return;
+    const cur = schedOf(j, k);
+    const at = $("sched-at").value;
+    if (!cur?.at && !at) return;
+    const val = withSched(j, k, cur?.at ? null : { at, m: new Date().toISOString().slice(0, 16) });
     const { error: e } = await sb.from("mobile_jobs").update({ scheduled: val }).eq("id", j.id);
     if (e) { $("sched-msg").textContent = "기록 실패 — 잠시 뒤 다시 눌러 주세요"; return; }
     j.scheduled = val;
@@ -499,36 +583,37 @@ async function showSchedule(j, pv) {
   };
 }
 
-// 이번 주 예약 목록: 아직 예약 안 한 완성 글을 블로그별로, 추천 날짜와 함께
+// 이번 주 예약 목록: 아직 예약 안 한 블로그별 글을, 추천 날짜와 함께
 async function showPlan() {
   show("plan");
   const list = $("plan-list");
   list.replaceChildren();
-  const { jobs, error } = await writtenJobs();
+  const { items, error } = await writtenItems();
   if (error) { $("plan-msg").textContent = "예약 목록은 DB 준비 후 켜집니다."; return; }
-  const plan = planSchedule(jobs);
+  const plan = planSchedule(items);
   const weekEnd = Date.now() + 7 * DAY;
-  const sites = [...new Set(jobs.map((j) => j.site))];
-  $("plan-msg").textContent = jobs.some((j) => !j.scheduled) ? `추천 시각은 매일 ${RECO_HOUR}시(고정), 같은 블로그는 하루 1편. 글을 눌러 붙여 넣고 예약한 뒤 '예약 완료'를 누르세요.`
+  const sites = [...new Set(items.map((x) => x.site))];
+  $("plan-msg").textContent = items.some((x) => !x.at)
+    ? `추천 시각은 매일 ${RECO_HOUR}시(고정). 블로그마다 하루 1편, 처음 2주는 주 2~3편, 같은 시공 건은 2~3일씩 띄웁니다. 글을 눌러 붙여 넣고 예약한 뒤 '예약 완료'를 누르세요.`
     : "예약할 글이 없습니다.";
   for (const site of sites) {
-    const mine = jobs.filter((j) => j.site === site);
-    const todo = mine.filter((j) => !j.scheduled).sort((a, b) => plan[a.id].localeCompare(plan[b.id]));
-    const done = mine.filter((j) => j.scheduled?.at && new Date(j.scheduled.at) >= new Date(Date.now() - DAY) && new Date(j.scheduled.at) <= weekEnd);
+    const mine = items.filter((x) => x.site === site);
+    const todo = mine.filter((x) => !x.at).sort((a, b) => plan[a.key].localeCompare(plan[b.key]));
+    const done = mine.filter((x) => x.at && new Date(x.at) >= new Date(Date.now() - DAY) && new Date(x.at) <= weekEnd);
     if (!todo.length && !done.length) continue;
     const h = document.createElement("h3");
     h.textContent = `${site} — 예약할 글 ${todo.length}편`;
     list.append(h);
-    for (const j of [...todo, ...done]) {
+    for (const x of [...todo, ...done]) {
       const li = document.createElement("li");
       const when = document.createElement("span");
-      when.className = "badge " + (j.scheduled ? "s-done" : "s-ask");
-      when.textContent = j.scheduled ? `예약됨 ${fmt(j.scheduled.at)}` : `추천 ${fmt(plan[j.id])}`;
-      const t = document.createElement("div");
-      t.className = "title";
-      t.textContent = j.title || "(제목 없음)";
-      li.append(when, t);
-      li.addEventListener("click", () => { location.hash = "#job=" + j.id; });
+      when.className = "badge " + (x.at ? "s-done" : "s-ask");
+      when.textContent = x.at ? `예약됨 ${fmt(x.at)}` : `추천 ${fmt(plan[x.key])}`;
+      const tt = document.createElement("div");
+      tt.className = "title";
+      tt.textContent = x.title || "(제목 없음)";
+      li.append(when, tt);
+      li.addEventListener("click", () => { location.hash = "#job=" + x.job; });
       list.append(li);
     }
   }
@@ -639,6 +724,10 @@ async function loadTop5() {
   const { data, error } = await sb.from("mobile_suggestions").select("rank,car,keyword,site_name,grade,reason,facts,updated_at").order("rank");
   if (error || !data || !data.length) { box.hidden = true; return; }
   box.hidden = false;
+  const sel = $("only-blog");                                    // 글을 쓸 블로그(이 건은 한 블로그만) 목록
+  for (const name of [...new Set(data.map((s) => s.site_name).filter(Boolean))]) {
+    if (![...sel.options].some((o) => o.value === name)) sel.append(new Option(`${name}만`, name));
+  }
   const list = $("top5-list");
   const items = [];
   let site = null;
